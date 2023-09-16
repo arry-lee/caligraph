@@ -47,6 +47,38 @@ def reconstruct_path(binary):
     return path, longest_contour.squeeze().tolist()
 
 
+def high_quality_mask(binary,epsilon=0.001,size=None):
+    # 找到连通域的轮廓
+    # if size:
+    #     binary = cv2.resize(binary,size)
+    contours, _ = cv2.findContours(
+        binary, cv2.RETR_EXTERNAL, cv2.cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    logger.debug(len(contours))
+    # 对轮廓进行简化或拟合，获得路径点列表
+    # 根据轮廓长度进行排序
+    sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+    # 选择长度最长的轮廓
+    longest_contour = sorted_contours[0]
+
+    # 对轮廓进行简化或拟合，获得路径点列表
+    epsilon = min(epsilon * cv2.arcLength(longest_contour, True),2)
+    # logger.debug(epsilon)
+
+    approx = cv2.approxPolyDP(longest_contour, 1, True)
+    if size:
+        resized_approx = np.array(approx*size[0]/150,np.int32)
+    else:
+        resized_approx = approx
+
+    # mask = np.zeros_like(binary, np.uint8)
+    mask = np.zeros(size, np.uint8)
+
+    cv2.fillPoly(mask, [resized_approx], 255)
+    return mask
+
 def compute_angle(point1, point2, point3):
     vector1 = point1 - point2
     vector2 = point3 - point2
@@ -132,111 +164,113 @@ def find_start_end_point(points, stroke_code):
     return s, e
 
 
-def animation(char, fp=None, approx=False):
-    """将文字转换成书写GIF"""
-    if len(char) != 1:
-        raise ValueError('only support single character')
-    # 读取原始图像
-    if not fp:
-        fp = f"{char}.mp4"
-
-    W, H = 150, 150
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    video_writer = cv2.VideoWriter(fp, fourcc, 30.0, (W, H))
-    gif_writer = imageio.get_writer(f"{char}.gif", fps=30)
-
-    bg = np.zeros((W, H, 3), np.uint8)
-    key_frame = np.zeros((W, H), np.uint8)
-    for stroke_image, stroke_code in zip(char_frames(char, vibe=False)[1:], char_strokes(char)):
-        msk = np.zeros((W, H), np.uint8)
-        mask = stroke_image.point(lambda x: 0 if x > 127 else 255)
-        image = np.asarray(mask, np.uint8)
-        # 还原笔记动线
-
-        # 绘制路径闭合多边形
-        path, contours = reconstruct_path(image)
-
-        logger.debug(len(path))
-
-        r = find_inscribed_circle_center(path)[2]  # 找到多边形的最大○
-        logger.debug(f'max ratio {r}')
-
-        points = path[:-1]
-
-        s, e = find_start_end_point(points, stroke_code)
-        start_point, end_point = points[s], points[e]
-
-        if approx:
-            if s < e:
-                curves = points[s: e + 1]  # 两条轨迹
-                curves2 = points[e:] + points[: s + 1]
-                curves2.reverse()
-            else:
-                curves = points[s:] + points[: e + 1]
-                curves2 = points[e: s + 1]
-                curves2.reverse()
-        else:
-            s = contours.index(points[s])
-            e = contours.index(points[e])
-            if s < e:
-                curves = contours[s: e + 1]  # 两条轨迹
-                curves2 = contours[e:] + contours[: s + 1]
-                curves2.reverse()
-            else:
-                curves = contours[s:] + contours[: e + 1]
-                curves2 = contours[e: s + 1]
-                curves2.reverse()
-
-        logger.debug("点数", len(curves), len(curves2))
-        if len(curves) < len(curves2):
-            curves, curves2 = curves2, curves
-
-        # # 计算所有公切圆
-        centers, rads, closest_points = find_center_radius(np.array(curves), np.array(curves2))
-        logger.debug(rads)
-
-        pts = np.array(path, np.int32)
-        pts = pts.reshape((-1, 1, 2))
-
-        cv2.fillPoly(bg, [pts], (255, 255, 255))
-        cv2.polylines(
-            bg,
-            [pts],
-            True,
-            (255, 0, 0),
-            1,
-        )
-        cv2.imshow("Original Image", bg)
-        cv2.circle(bg, start_point, 5, (0, 255, 255))  # 起点
-        cv2.circle(bg, end_point, 5, (255, 255, 0))  # 终点
-
-        for i in range(len(curves)):
-            # 找到 curves[i] 到 curves2 的最短距离
-            # cv2.line(msk, curves[i], closest_points[i], 255, 7)  # todo 半径要随着位置变化
-            # cv2.circle(msk, curves[i], closest_points[i], 255, 7)
-            # cv2.line(bg, curves[i], curves[i + 1], (0, 255, 0), 10 + rads[i] * 2)
-            # cv2.line(bg, curves[i], curves[i + 1], (255, 0, 0), 2)
-            cv2.line(bg, curves[i], closest_points[i], (255, 0, 0), 5)
-
-            cv2.circle(msk, centers[i], 1 + int(2.2 * rads[i]), 255, -1)
-            fr = cv2.bitwise_and(image, msk)
-            key_frame = cv2.bitwise_or(key_frame, fr)  # fixme
-
-            video_writer.write(cv2.cvtColor(key_frame, cv2.COLOR_GRAY2BGR))
-            # 写入gif文件中
-            gif_writer.append_data(cv2.cvtColor(key_frame, cv2.COLOR_BGR2RGB))
-
-        for i in range(len(centers) - 1):
-            cv2.line(bg, centers[i], centers[i + 1], (0, 255, 255), 2)
-
-        # # 显示结果
-        cv2.imshow("Original Image", bg)
-        cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    cv2.imwrite(f"{char}.png", bg)
-    video_writer.release()
-    gif_writer.close()
-
+# def animation(char, fp=None, approx=False):
+#     """将文字转换成书写GIF"""
+#     if len(char) != 1:
+#         raise ValueError('only support single character')
+#     # 读取原始图像
+#     if not fp:
+#         fp = f"{char}.mp4"
+#
+#     W, H = 150, 150
+#     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+#     video_writer = cv2.VideoWriter(fp, fourcc, 30.0, (W, H))
+#     gif_writer = imageio.get_writer(f"{char}.gif", fps=30)
+#
+#     bg = np.zeros((W, H, 3), np.uint8)
+#     key_frame = np.zeros((W, H), np.uint8)
+#     for stroke_image, stroke_code in zip(char_frames(char, vibe=False)[1:], char_strokes(char)):
+#         msk = np.zeros((W, H), np.uint8)
+#         mask = stroke_image.point(lambda x: 0 if x > 127 else 255)
+#         image = np.asarray(mask, np.uint8)
+#         # 还原笔记动线
+#
+#         # 绘制路径闭合多边形
+#         path, contours = reconstruct_path(image)
+#
+#         image = high_quality_mask(image)
+#
+#         logger.debug(len(path))
+#
+#         r = find_inscribed_circle_center(path)[2]  # 找到多边形的最大○
+#         logger.debug(f'max ratio {r}')
+#
+#         points = path[:-1]
+#
+#         s, e = find_start_end_point(points, stroke_code)
+#         start_point, end_point = points[s], points[e]
+#
+#         if approx:
+#             if s < e:
+#                 curves = points[s: e + 1]  # 两条轨迹
+#                 curves2 = points[e:] + points[: s + 1]
+#                 curves2.reverse()
+#             else:
+#                 curves = points[s:] + points[: e + 1]
+#                 curves2 = points[e: s + 1]
+#                 curves2.reverse()
+#         else:
+#             s = contours.index(points[s])
+#             e = contours.index(points[e])
+#             if s < e:
+#                 curves = contours[s: e + 1]  # 两条轨迹
+#                 curves2 = contours[e:] + contours[: s + 1]
+#                 curves2.reverse()
+#             else:
+#                 curves = contours[s:] + contours[: e + 1]
+#                 curves2 = contours[e: s + 1]
+#                 curves2.reverse()
+#
+#         logger.debug("点数", len(curves), len(curves2))
+#         if len(curves) < len(curves2):
+#             curves, curves2 = curves2, curves
+#
+#         # # 计算所有公切圆
+#         centers, rads, closest_points = find_center_radius(np.array(curves), np.array(curves2))
+#         logger.debug(rads)
+#
+#         pts = np.array(path, np.int32)
+#         pts = pts.reshape((-1, 1, 2))
+#
+#         cv2.fillPoly(bg, [pts], (255, 255, 255))
+#         cv2.polylines(
+#             bg,
+#             [pts],
+#             True,
+#             (255, 0, 0),
+#             1,
+#         )
+#         cv2.imshow("Original Image", bg)
+#         cv2.circle(bg, start_point, 5, (0, 255, 255))  # 起点
+#         cv2.circle(bg, end_point, 5, (255, 255, 0))  # 终点
+#
+#         for i in range(len(curves)):
+#             # 找到 curves[i] 到 curves2 的最短距离
+#             # cv2.line(msk, curves[i], closest_points[i], 255, 7)  # todo 半径要随着位置变化
+#             # cv2.circle(msk, curves[i], closest_points[i], 255, 7)
+#             # cv2.line(bg, curves[i], curves[i + 1], (0, 255, 0), 10 + rads[i] * 2)
+#             # cv2.line(bg, curves[i], curves[i + 1], (255, 0, 0), 2)
+#             cv2.line(bg, curves[i], closest_points[i], (255, 0, 0), 5)
+#
+#             cv2.circle(msk, centers[i], 1 + int(2.2 * rads[i]), 255, -1)
+#             fr = cv2.bitwise_and(image, msk)
+#             key_frame = cv2.bitwise_or(key_frame, fr)  # fixme
+#
+#             video_writer.write(cv2.cvtColor(key_frame, cv2.COLOR_GRAY2BGR))
+#             # 写入gif文件中
+#             gif_writer.append_data(cv2.cvtColor(key_frame, cv2.COLOR_BGR2RGB))
+#
+#         for i in range(len(centers) - 1):
+#             cv2.line(bg, centers[i], centers[i + 1], (0, 255, 255), 2)
+#
+#         # # 显示结果
+#         cv2.imshow("Original Image", bg)
+#         cv2.waitKey(0)
+#     cv2.destroyAllWindows()
+#     cv2.imwrite(f"{char}.png", bg)
+#     video_writer.release()
+#     gif_writer.close()
+#
 
 def sample_centers(centers, approx_centers):
     indexs = []
@@ -249,20 +283,26 @@ def sample_centers(centers, approx_centers):
         samples.extend(nonlinear_sample_list(ls,min(24,len(ls))))
     return set(samples)
 
-def generate_frames(char, approx=False, speed=None):
+def generate_frames(char, approx=False, speed=None,size=None):
     """生成帧"""
     if len(char) != 1:
         raise ValueError('only support single character')
-
-    W, H = 150, 150
+    if not size:
+        W, H = 150, 150
+        ratio = 1
+    else:
+        W,H = size
+        ratio = W/150
     bg = np.zeros((W, H, 3), np.uint8)
     key_frame = np.zeros((W, H), np.uint8)
     for stroke_image, stroke_code in zip(char_frames(char, vibe=False)[1:], char_strokes(char)):
-        msk = np.zeros((W, H), np.uint8)
+        msk = np.zeros((150, 150), np.uint8)
         mask = stroke_image.point(lambda x: 0 if x > 127 else 255)
         image = np.asarray(mask, np.uint8)
 
         path, contours = reconstruct_path(image)
+
+
         points = path[:-1]
         s, e = find_start_end_point(points, stroke_code)
         start_point, end_point = points[s], points[e]
@@ -292,7 +332,7 @@ def generate_frames(char, approx=False, speed=None):
 
         centers, rads, closest_points = find_center_radius(np.array(curves), np.array(curves2))
 
-        approx_centers = cv2.approxPolyDP(centers, 2, True).squeeze().tolist()
+        approx_centers = cv2.approxPolyDP(centers, 2, False).squeeze().tolist()
 
         if speed is None:
             speeds = sample_centers(centers.tolist(),approx_centers)
@@ -306,10 +346,17 @@ def generate_frames(char, approx=False, speed=None):
         cv2.circle(bg, start_point, 5, (0, 255, 255))
         cv2.circle(bg, end_point, 5, (255, 255, 0))
 
+        image = high_quality_mask(image, 0.001, size)
+
+
+
         for i in range(len(curves)):
             cv2.line(bg, curves[i], closest_points[i], (255, 0, 0), 5) # todo 通过i来控制采样速度
             cv2.circle(msk, centers[i], 1 + int(2.2 * rads[i]), 255, -1)
-            fr = cv2.bitwise_and(image, msk)
+
+            _mask = cv2.resize(msk,size)
+
+            fr = cv2.bitwise_and(image, _mask)
             key_frame = cv2.bitwise_or(key_frame, fr)
 
             if speed:
@@ -325,22 +372,22 @@ def generate_frames(char, approx=False, speed=None):
         for i in range(len(approx_centers) - 1):
             cv2.line(bg, approx_centers[i], approx_centers[i + 1], (0, 255, 255), 2)
             # # 显示结果
-            cv2.imshow("Original Image", bg)
-            cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        #     cv2.imshow("Original Image", bg)
+        #     cv2.waitKey(0)
+        # cv2.destroyAllWindows()
         yield key_frame
 
-def write_to_file(char, fp=None):
+def write_to_file(char, fp=None,size=None):
     """写入文件"""
     if not fp:
         fp = f"{char}.mp4"
-
-    W, H = 150, 150
+    if not size:
+        size = (150, 150)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    video_writer = cv2.VideoWriter(fp, fourcc, 30.0, (W, H))
+    video_writer = cv2.VideoWriter(fp, fourcc, 30.0, size)
     gif_writer = imageio.get_writer(f"{char}.gif", fps=30)
 
-    for key_frame in generate_frames(char):
+    for key_frame in generate_frames(char,size=size):
         video_writer.write(cv2.cvtColor(key_frame, cv2.COLOR_GRAY2BGR))
         gif_writer.append_data(cv2.cvtColor(key_frame, cv2.COLOR_BGR2RGB))
 
@@ -373,4 +420,4 @@ def nonlinear_sample_list(lst, num_samples):
 if __name__ == '__main__':
     import sys
 
-    write_to_file(sys.argv[1])
+    write_to_file(sys.argv[1],size=(500,500))

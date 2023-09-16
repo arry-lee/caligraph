@@ -6,6 +6,7 @@
 2.边缘检测，只保留边缘线，
 
 """
+import math
 import random
 import cv2
 import imageio
@@ -237,7 +238,18 @@ def animation(char, fp=None, approx=False):
     gif_writer.close()
 
 
-def generate_frames(char, approx=False):
+def sample_centers(centers, approx_centers):
+    indexs = []
+    for center in approx_centers:
+        i = centers.index(center)
+        indexs.append(i)
+    samples = []
+    for i in range(len(indexs)-1):
+        ls = list(range(indexs[i],indexs[i+1]))
+        samples.extend(nonlinear_sample_list(ls,min(24,len(ls))))
+    return set(samples)
+
+def generate_frames(char, approx=False, speed=None):
     """生成帧"""
     if len(char) != 1:
         raise ValueError('only support single character')
@@ -280,25 +292,43 @@ def generate_frames(char, approx=False):
 
         centers, rads, closest_points = find_center_radius(np.array(curves), np.array(curves2))
 
+        approx_centers = cv2.approxPolyDP(centers, 2, True).squeeze().tolist()
+
+        if speed is None:
+            speeds = sample_centers(centers.tolist(),approx_centers)
+
         pts = np.array(path, np.int32)
         pts = pts.reshape((-1, 1, 2))
 
         cv2.fillPoly(bg, [pts], (255, 255, 255))
+
         cv2.polylines(bg, [pts], True, (255, 0, 0), 1)
         cv2.circle(bg, start_point, 5, (0, 255, 255))
         cv2.circle(bg, end_point, 5, (255, 255, 0))
 
         for i in range(len(curves)):
-            cv2.line(bg, curves[i], closest_points[i], (255, 0, 0), 5)
+            cv2.line(bg, curves[i], closest_points[i], (255, 0, 0), 5) # todo 通过i来控制采样速度
             cv2.circle(msk, centers[i], 1 + int(2.2 * rads[i]), 255, -1)
             fr = cv2.bitwise_and(image, msk)
             key_frame = cv2.bitwise_or(key_frame, fr)
-            yield key_frame
 
-        for i in range(len(centers) - 1):
-            cv2.line(bg, centers[i], centers[i + 1], (0, 255, 255), 2)
+            if speed:
+                if i% speed ==0:
+                    yield key_frame
+            else:
+                if i in speeds:
+                    yield key_frame
 
-        # yield bg, key_frame
+        # 使用center近似
+        # approx =
+
+        for i in range(len(approx_centers) - 1):
+            cv2.line(bg, approx_centers[i], approx_centers[i + 1], (0, 255, 255), 2)
+            # # 显示结果
+            cv2.imshow("Original Image", bg)
+            cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        yield key_frame
 
 def write_to_file(char, fp=None):
     """写入文件"""
@@ -317,6 +347,28 @@ def write_to_file(char, fp=None):
     video_writer.release()
     gif_writer.close()
 
+
+
+
+
+
+def nonlinear_sample_list(lst, num_samples):
+    length = len(lst)
+    if num_samples >= length:
+        return lst
+
+    # 根据采样数量生成非线性变换的参数
+    x = np.linspace(0, 1, num_samples//2)  # 在区间 [0, 1] 上均匀采样
+    y = x**2  # 采用 sin 函数进行非线性变换
+
+    # 根据参数对原始列表进行非线性采样
+    samples = []
+    for i in range(num_samples//2):
+        index = math.ceil(y[i] * ((length-1)/2))
+        samples.append(index)
+    samples.extend([length-1-i for i in samples[-2::-1]])
+    # samples.append(samples[-1])
+    return [lst[i] for i in samples]
 
 if __name__ == '__main__':
     import sys

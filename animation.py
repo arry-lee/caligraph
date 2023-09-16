@@ -61,6 +61,7 @@ def compute_angle(point1, point2, point3):
 
 
 def find_min_angle_vertices(pts):
+    """找笔画多边形的起点和终点"""
     num_vertices = len(pts)
     min_angle = float("inf")
     min_angle_vertices = []
@@ -74,21 +75,22 @@ def find_min_angle_vertices(pts):
 
         # 计算当前顶点与相邻两个顶点形成的夹角
         angle = compute_angle(vertex1, vertex2, vertex3)
-        if angle <= 180:
+        if angle <= 120:
             angles.append((angle, i))
 
     angles.sort()
     if len(angles) == 2:
         return angles
     elif len(angles) > 2:
+        # if angles[1]-angles[0]<
         a = angles.pop(0)
         si = a[1]
         d = (num_vertices) // 2
         # 多个锐角的话，找到最小的和与最小的距离最远的一个
         angles.sort(
-            key=lambda x: abs(x[1] - si)
+            key=lambda x: (abs(x[1] - si),x[0])  # 坐标到最小点,坐标距离可能是一样的此时用最小的角
             if d >= abs(x[1] - si)
-            else num_vertices - abs(x[1] - si),
+            else (num_vertices - abs(x[1] - si),x[0]),
             reverse=True,
         )
         return [a, angles[0]]
@@ -214,8 +216,8 @@ def animation(char, fp=None, approx=False):
             cv2.line(bg, centers[i], centers[i + 1], (0, 255, 255), 2)
 
         # # 显示结果
-        # cv2.imshow("Original Image", bg)
-        # cv2.waitKey(0)
+        cv2.imshow("Original Image", bg)
+        cv2.waitKey(0)
     cv2.destroyAllWindows()
     cv2.imwrite(f"{char}.png", bg)
     video_writer.release()

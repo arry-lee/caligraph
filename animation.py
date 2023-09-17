@@ -19,6 +19,16 @@ from strokes import char_frames, char_strokes
 from loguru import logger
 
 
+def find_two_end(pts):
+    """
+    绘制外界矩形，按长边分成两半，可以相信每一半有个端点，用
+    :param pts:
+    :type pts:
+    :return:
+    :rtype:
+    """
+
+
 def reconstruct_path(binary):
     # 找到连通域的轮廓
     contours, _ = cv2.findContours(
@@ -95,12 +105,21 @@ def compute_angle(point1, point2, point3):
 
 
 def find_min_angle_vertices(pts):
-    """找笔画多边形的起点和终点"""
+    """找笔画多边形的起点和终点
+    """
     num_vertices = len(pts)
-    min_angle = float("inf")
-    min_angle_vertices = []
 
-    angles = []
+    x, y, w, h = cv2.boundingRect(pts)
+
+    if w > h:
+        half = x + w // 2
+    else:
+        half = y + h // 2
+
+    first = []
+    second = []
+
+    # angles = []
     for i in range(0, num_vertices):
         # 获取当前顶点及相邻的两个顶点
         vertex1 = pts[i - 1]
@@ -110,26 +129,43 @@ def find_min_angle_vertices(pts):
         # 计算当前顶点与相邻两个顶点形成的夹角
         angle = compute_angle(vertex1, vertex2, vertex3)
         if angle <= 120:
-            angles.append((angle, i))
-
-    angles.sort()
-    if len(angles) == 2:
-        return angles
-    elif len(angles) > 2:
-        # if angles[1]-angles[0]<
-        a = angles.pop(0)
-        si = a[1]
-        d = (num_vertices) // 2
-        # 多个锐角的话，找到最小的和与最小的距离最远的一个
-        angles.sort(
-            key=lambda x: (abs(x[1] - si), x[0])  # 坐标到最小点,坐标距离可能是一样的此时用最小的角
-            if d >= abs(x[1] - si)
-            else (num_vertices - abs(x[1] - si), x[0]),
-            reverse=True,
-        )
-        return [a, angles[0]]
+            if w > h:
+                if vertex2[0] < half:
+                    first.append((angle, i))
+                else:
+                    second.append((angle, i))
+            else:
+                if vertex2[1] < half:
+                    first.append((angle, i))
+                else:
+                    second.append((angle, i))
+            # angles.append((angle, i))
+    first.sort()
+    second.sort()
+    if len(first) > 0 and len(second) > 0:
+        return (first[0], second[0])
     else:
-        raise Exception(f"没有找到两个以上的锐角{angles}")
+        raise Exception("没有找到两个以上的锐角")
+
+    # 下面是旧算法
+    # angles.sort()
+    # if len(angles) == 2:
+    #     return angles
+    # elif len(angles) > 2:
+    #     # if angles[1]-angles[0]<
+    #     a = angles.pop(0)
+    #     si = a[1]
+    #     d = (num_vertices) // 2
+    #     # 多个锐角的话，找到最小的和与最小的距离最远的一个
+    #     angles.sort(
+    #         key=lambda x: (abs(x[1] - si), x[0])  # 坐标到最小点,坐标距离可能是一样的此时用最小的角
+    #         if d >= abs(x[1] - si)
+    #         else (num_vertices - abs(x[1] - si), x[0]),
+    #         reverse=True,
+    #     )
+    #     return [a, angles[0]]
+    # else:
+    #     raise Exception(f"没有找到两个以上的锐角{angles}")
 
 
 def find_center_radius(points1, points2):
@@ -285,6 +321,25 @@ def sample_centers(centers, approx_centers):
     return set(samples)
 
 
+def nonlinear_sample_list(lst, num_samples):
+    length = len(lst)
+    if num_samples >= length:
+        return lst
+
+    # 根据采样数量生成非线性变换的参数
+    x = np.linspace(0, 1, num_samples // 2)  # 在区间 [0, 1] 上均匀采样
+    y = x ** 2  # 采用 sin 函数进行非线性变换
+
+    # 根据参数对原始列表进行非线性采样
+    samples = []
+    for i in range(num_samples // 2):
+        index = math.ceil(y[i] * ((length - 1) / 2))
+        samples.append(index)
+    samples.extend([length - 1 - i for i in samples[-2::-1]])
+    # samples.append(samples[-1])
+    return [lst[i] for i in samples]
+
+
 def generate_frames(char, approx=False, speed=None, size=None):
     """生成帧"""
     if len(char) != 1:
@@ -348,6 +403,7 @@ def generate_frames(char, approx=False, speed=None, size=None):
         cv2.circle(bg, end_point, 5, (255, 255, 0))
 
         image = high_quality_mask(image, 0.001, size)
+        # corners = cv2.goodFeaturesToTrack(image, maxCorners=2, qualityLevel=0.5, minDistance=7)
 
         for i in range(len(curves)):
             cv2.line(bg, curves[i], closest_points[i], (255, 0, 0), 5)  # todo 通过i来控制采样速度
@@ -364,6 +420,11 @@ def generate_frames(char, approx=False, speed=None, size=None):
             else:
                 if i in speeds:
                     yield key_frame
+
+        # 在原始图像上绘制角点
+        # for corner in np.int0(corners):
+        #     x, y = corner.ravel()
+        #     cv2.circle(bg, (x, y), 3, (0, 255, 0), -1)
 
         for i in range(len(approx_centers) - 1):
             cv2.line(bg, approx_centers[i], approx_centers[i + 1], (0, 255, 255), 2)
@@ -392,20 +453,13 @@ def write_to_file(char, fp=None, size=None):
     gif_writer.close()
 
 
-def nonlinear_sample_list(lst, num_samples):
-    length = len(lst)
-    if num_samples >= length:
-        return lst
-
-    # 根据采样数量生成非线性变换的参数
-    x = np.linspace(0, 1, num_samples // 2)  # 在区间 [0, 1] 上均匀采样
-    y = x ** 2  # 采用 sin 函数进行非线性变换
-
-    # 根据参数对原始列表进行非线性采样
-    samples = []
-    for i in range(num_samples // 2):
-        index = math.ceil(y[i] * ((length - 1) / 2))
-        samples.append(index)
-    samples.extend([length - 1 - i for i in samples[-2::-1]])
-    # samples.append(samples[-1])
-    return [lst[i] for i in samples]
+def animation(text, height=150):
+    n = len(text)
+    size = (height, height)
+    key_frame = np.zeros((height, height * n), np.uint8)
+    for i, char in enumerate(text):
+        for frame in generate_frames(char, approx=False, speed=None, size=size):
+            x = i * height
+            y = 0
+            key_frame[y:y + height, x:x + height] = frame
+            yield key_frame

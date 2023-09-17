@@ -47,7 +47,7 @@ def reconstruct_path(binary):
     return path, longest_contour.squeeze().tolist()
 
 
-def high_quality_mask(binary,epsilon=0.001,size=None):
+def high_quality_mask(binary, epsilon=0.001, size=None):
     # 找到连通域的轮廓
     # if size:
     #     binary = cv2.resize(binary,size)
@@ -64,12 +64,12 @@ def high_quality_mask(binary,epsilon=0.001,size=None):
     longest_contour = sorted_contours[0]
 
     # 对轮廓进行简化或拟合，获得路径点列表
-    epsilon = min(epsilon * cv2.arcLength(longest_contour, True),2)
+    epsilon = min(epsilon * cv2.arcLength(longest_contour, True), 2)
     # logger.debug(epsilon)
 
     approx = cv2.approxPolyDP(longest_contour, 1, True)
     if size:
-        resized_approx = np.array(approx*size[0]/150,np.int32)
+        resized_approx = np.array(approx * size[0] / 150, np.int32)
     else:
         resized_approx = approx
 
@@ -78,6 +78,7 @@ def high_quality_mask(binary,epsilon=0.001,size=None):
 
     cv2.fillPoly(mask, [resized_approx], 255)
     return mask
+
 
 def compute_angle(point1, point2, point3):
     vector1 = point1 - point2
@@ -278,12 +279,13 @@ def sample_centers(centers, approx_centers):
         i = centers.index(center)
         indexs.append(i)
     samples = []
-    for i in range(len(indexs)-1):
-        ls = list(range(indexs[i],indexs[i+1]))
-        samples.extend(nonlinear_sample_list(ls,min(24,len(ls))))
+    for i in range(len(indexs) - 1):
+        ls = list(range(indexs[i], indexs[i + 1]))
+        samples.extend(nonlinear_sample_list(ls, min(24, len(ls))))
     return set(samples)
 
-def generate_frames(char, approx=False, speed=None,size=None):
+
+def generate_frames(char, approx=False, speed=None, size=None):
     """生成帧"""
     if len(char) != 1:
         raise ValueError('only support single character')
@@ -291,8 +293,8 @@ def generate_frames(char, approx=False, speed=None,size=None):
         W, H = 150, 150
         ratio = 1
     else:
-        W,H = size
-        ratio = W/150
+        W, H = size
+        ratio = W / 150
     bg = np.zeros((W, H, 3), np.uint8)
     key_frame = np.zeros((W, H), np.uint8)
     for stroke_image, stroke_code in zip(char_frames(char, vibe=False)[1:], char_strokes(char)):
@@ -301,7 +303,6 @@ def generate_frames(char, approx=False, speed=None,size=None):
         image = np.asarray(mask, np.uint8)
 
         path, contours = reconstruct_path(image)
-
 
         points = path[:-1]
         s, e = find_start_end_point(points, stroke_code)
@@ -335,7 +336,7 @@ def generate_frames(char, approx=False, speed=None,size=None):
         approx_centers = cv2.approxPolyDP(centers, 2, False).squeeze().tolist()
 
         if speed is None:
-            speeds = sample_centers(centers.tolist(),approx_centers)
+            speeds = sample_centers(centers.tolist(), approx_centers)
 
         pts = np.array(path, np.int32)
         pts = pts.reshape((-1, 1, 2))
@@ -348,26 +349,21 @@ def generate_frames(char, approx=False, speed=None,size=None):
 
         image = high_quality_mask(image, 0.001, size)
 
-
-
         for i in range(len(curves)):
-            cv2.line(bg, curves[i], closest_points[i], (255, 0, 0), 5) # todo 通过i来控制采样速度
+            cv2.line(bg, curves[i], closest_points[i], (255, 0, 0), 5)  # todo 通过i来控制采样速度
             cv2.circle(msk, centers[i], 1 + int(2.2 * rads[i]), 255, -1)
 
-            _mask = cv2.resize(msk,size)
+            _mask = cv2.resize(msk, size)
 
             fr = cv2.bitwise_and(image, _mask)
             key_frame = cv2.bitwise_or(key_frame, fr)
 
             if speed:
-                if i% speed ==0:
+                if i % speed == 0:
                     yield key_frame
             else:
                 if i in speeds:
                     yield key_frame
-
-        # 使用center近似
-        # approx =
 
         for i in range(len(approx_centers) - 1):
             cv2.line(bg, approx_centers[i], approx_centers[i + 1], (0, 255, 255), 2)
@@ -377,7 +373,8 @@ def generate_frames(char, approx=False, speed=None,size=None):
         # cv2.destroyAllWindows()
         yield key_frame
 
-def write_to_file(char, fp=None,size=None):
+
+def write_to_file(char, fp=None, size=None):
     """写入文件"""
     if not fp:
         fp = f"{char}.mp4"
@@ -387,16 +384,12 @@ def write_to_file(char, fp=None,size=None):
     video_writer = cv2.VideoWriter(fp, fourcc, 30.0, size)
     gif_writer = imageio.get_writer(f"{char}.gif", fps=30)
 
-    for key_frame in generate_frames(char,size=size):
+    for key_frame in generate_frames(char, size=size):
         video_writer.write(cv2.cvtColor(key_frame, cv2.COLOR_GRAY2BGR))
         gif_writer.append_data(cv2.cvtColor(key_frame, cv2.COLOR_BGR2RGB))
 
     video_writer.release()
     gif_writer.close()
-
-
-
-
 
 
 def nonlinear_sample_list(lst, num_samples):
@@ -405,19 +398,14 @@ def nonlinear_sample_list(lst, num_samples):
         return lst
 
     # 根据采样数量生成非线性变换的参数
-    x = np.linspace(0, 1, num_samples//2)  # 在区间 [0, 1] 上均匀采样
-    y = x**2  # 采用 sin 函数进行非线性变换
+    x = np.linspace(0, 1, num_samples // 2)  # 在区间 [0, 1] 上均匀采样
+    y = x ** 2  # 采用 sin 函数进行非线性变换
 
     # 根据参数对原始列表进行非线性采样
     samples = []
-    for i in range(num_samples//2):
-        index = math.ceil(y[i] * ((length-1)/2))
+    for i in range(num_samples // 2):
+        index = math.ceil(y[i] * ((length - 1) / 2))
         samples.append(index)
-    samples.extend([length-1-i for i in samples[-2::-1]])
+    samples.extend([length - 1 - i for i in samples[-2::-1]])
     # samples.append(samples[-1])
     return [lst[i] for i in samples]
-
-if __name__ == '__main__':
-    import sys
-
-    write_to_file(sys.argv[1],size=(500,500))

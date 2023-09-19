@@ -36,10 +36,8 @@ caligraph 是一个用于生成和仿真汉字书写动画的工具。它提供�
 
 4. 运行 caligraph：
 
-`python caligraph.py`
+`python caligraph 汉字`
 
-
-访问 http://localhost:8000 在浏览器中查看 caligraph。
 
 ## 贡献
 
